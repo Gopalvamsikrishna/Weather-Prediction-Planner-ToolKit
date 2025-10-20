@@ -1,0 +1,3 @@
+def history_view(request):
+    # ... similar logic for history ...
+    return JsonResponse({})

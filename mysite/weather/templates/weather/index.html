@@ -490,7 +490,7 @@
           ]);
         }
 
-        const SERVER = "http://127.0.0.1:8000";
+        const SERVER = "/weather";
 
         // Initialize map
         const defaultLat = 12.97,
@@ -711,10 +711,7 @@
           if (xs.length >= 2) {
             // compute linear fit
             const n = xs.length;
-            let sumX = 0,
-              sumY = 0,
-              sumXY = 0,
-              sumXX = 0;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
             for (let i = 0; i < n; i++) {
               sumX += xs[i];
               sumY += ys[i];
@@ -871,19 +868,31 @@
 
           try {
             const results = await Promise.allSettled([
-              fetchWithTimeout(probUrl, { cache: "no-store" }, 20000).then(
+              fetchWithTimeout(
+                probUrl,
+                { cache: "no-store" },
+                20000
+              ).then(
                 (r) =>
                   r.ok
                     ? r.json()
-                    : Promise.reject(new Error("Prob resp " + r.status))
+                    : Promise..reject(new Error("Prob resp " + r.status))
               ),
-              fetchWithTimeout(trendUrl, { cache: "no-store" }, 20000).then(
+              fetchWithTimeout(
+                trendUrl,
+                { cache: "no-store" },
+                20000
+              ).then(
                 (r) =>
                   r.ok
                     ? r.json()
                     : Promise.reject(new Error("Trend resp " + r.status))
               ),
-              fetchWithTimeout(histUrl, { cache: "no-store" }, 20000).then(
+              fetchWithTimeout(
+                histUrl,
+                { cache: "no-store" },
+                20000
+              ).then(
                 (r) =>
                   r.ok
                     ? r.json()
