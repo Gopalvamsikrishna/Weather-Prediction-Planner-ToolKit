@@ -1,4 +1,4 @@
-# Will It Rain On My Parade
+# Weather Prediction & Planner ToolKit
 
 A Django-based web application that displays historical weather data.
 
