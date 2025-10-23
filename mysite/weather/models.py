@@ -8,7 +8,7 @@ class HistoricalDataPoint(models.Model):
     # 1. Geospatial and Date Keys (Primary Index)
     latitude = models.FloatField(db_index=True)
     longitude = models.FloatField(db_index=True)
-    date = models.DateField(db_index=True, unique=True) # Ensures unique entry per day/location combination
+    date = models.DateField(db_index=True) # The unique_together constraint handles uniqueness
 
     # Derived temporal fields (useful for quick filtering/grouping)
     year = models.IntegerField(db_index=True)

@@ -1,990 +1,265 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Will It Rain On My Parade? - Improved Map Fixes</title>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Will It Rain On My Parade? - Django Edition</title>
 
-    <!-- Plotly + Leaflet + GeoSearch -->
-    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin=""
-    />
-    <link
-      rel="stylesheet"
-      href="https://unpkg.com/leaflet-geosearch@3.6.1/dist/geosearch.css"
-    />
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""
-    ></script>
-    <script src="https://unpkg.com/leaflet-geosearch@3.6.1/dist/geosearch.umd.js"></script>
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 
-    <!-- Google font -->
-    <link
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap"
-      rel="stylesheet"
-    />
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 
     <style>
-      :root {
-        --bg: #0f1724;
-        --card: #0b1220;
-        --muted: #94a3b8;
-        --accent: #06b6d4;
-        --accent-2: #7c3aed;
-        --radius: 12px;
-        --text-color: #e6eef8;
-      }
-      :root.light {
-        --bg: #f6f8fa;
-        --card: #ffffff;
-        --muted: #6b7280;
-        --accent: #0d6efd;
-        --text-color: #24292e;
-      }
-
-      * {
-        box-sizing: border-box;
-      }
-      html,
-      body {
-        height: 100%;
-        margin: 0;
-        font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto,
-          Arial;
-        background: var(--bg);
-        color: var(--text-color);
-      }
-      .app {
-        display: grid;
-        grid-template-columns: 380px 1fr;
-        gap: 0;
-        height: 100vh;
-      }
-      @media (max-width: 900px) {
-        .app {
-          grid-template-columns: 1fr;
-          grid-template-rows: auto 1fr;
+        body {
+            background-color: #f8f9fa;
         }
-      }
-
-      .sidebar {
-        padding: 20px;
-        background: var(--card);
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-        min-height: 0;
-      }
-      .topbar {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-      }
-      .title {
-        font-size: 18px;
-        font-weight: 700;
-      }
-      .subtitle {
-        color: var(--muted);
-        font-size: 13px;
-        margin-top: 6px;
-      }
-
-      /* MAP container */
-      #map {
-        height: 300px;
-        min-height: 200px;
-        width: 100%;
-        border-radius: 10px;
-        overflow: hidden;
-        border: 1px solid rgba(255, 255, 255, 0.02);
-        background: linear-gradient(180deg, #09121a, #0f1724);
-        position: relative;
-        z-index: 2;
-      }
-      /* Ensure Leaflet container background visible while tiles load */
-      .leaflet-container {
-        background: linear-gradient(180deg, #09121a, #0f1724);
-      }
-
-      .card {
-        background: var(--card);
-        border-radius: var(--radius);
-        padding: 16px;
-        box-shadow: 0 8px 30px rgba(2, 6, 23, 0.45);
-        border: 1px solid rgba(255, 255, 255, 0.02);
-        margin-bottom: 14px;
-      }
-      h2 {
-        margin: 0;
-        font-size: 18px;
-        font-weight: 800;
-      }
-      .lead {
-        color: var(--muted);
-        margin-top: 6px;
-        margin-bottom: 0;
-        font-size: 14px;
-      }
-      select,
-      input,
-      button {
-        font-family: inherit;
-      }
-
-      /* Form */
-      label {
-        display: block;
-        color: var(--muted);
-        font-weight: 600;
-        margin-bottom: 6px;
-      }
-      select,
-      input[type="number"],
-      input[type="text"] {
-        width: 100%;
-        padding: 10px 12px;
-        border-radius: 8px;
-        border: 1px solid rgba(0, 0, 0, 0.12);
-        background: transparent;
-        color: inherit;
-      }
-      button.primary {
-        background: linear-gradient(90deg, var(--accent), var(--accent-2));
-        border: none;
-        padding: 10px 14px;
-        border-radius: 10px;
-        color: #fff;
-        cursor: pointer;
-      }
-      button.ghost {
-        background: transparent;
-        border: 1px solid rgba(255, 255, 255, 0.04);
-        padding: 8px 12px;
-        border-radius: 8px;
-        color: var(--muted);
-        cursor: pointer;
-      }
-
-      .main {
-        padding: 22px;
-        overflow: auto;
-        min-height: 0;
-        background: linear-gradient(
-          180deg,
-          rgba(255, 255, 255, 0.01),
-          rgba(255, 255, 255, 0)
-        );
-      }
-      .chart {
-        flex: 1;
-        min-height: 340px;
-        height: 340px; /* fixed height to stop runaway growth */
-        max-height: 420px;
-        border-radius: 10px;
-        overflow: hidden; /* prevent Plotly SVG from overflowing */
-        position: relative;
-      }
-      @media (max-width: 900px) {
-        .chart-row {
-          flex-direction: column;
+        #map {
+            height: 300px;
+            width: 100%;
+            border-radius: 0.5rem;
         }
-      }
-
-      #annualChart,
-      #decadalChart {
-        height: 340px; /* ensure both charts same fixed height */
-      }
-
-      /* z-index fixes & geosearch dark theme */
-      .leaflet-pane {
-        z-index: 0;
-      }
-      .leaflet-tile-pane {
-        z-index: 1;
-      }
-      .leaflet-overlay-pane {
-        z-index: 5;
-      }
-      .leaflet-marker-pane {
-        z-index: 6;
-      }
-      .leaflet-control {
-        z-index: 1200;
-      }
-      .leaflet-control-geosearch {
-        z-index: 1400;
-      }
-      /* style the geosearch result dropdown to match dark theme and avoid bright white */
-      .leaflet-control-geosearch .results {
-        background: rgba(8, 12, 18, 0.98) !important;
-        color: #e6eef8 !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
-        border-radius: 8px;
-        max-height: 260px;
-        overflow: auto;
-      }
-      .leaflet-control-geosearch .result:hover {
-        background: rgba(255, 255, 255, 0.03) !important;
-        color: #fff !important;
-      }
-
-      /* overlay spinner */
-      .overlay {
-        position: fixed;
-        inset: 0;
-        display: none;
-        align-items: center;
-        justify-content: center;
-        background: rgba(2, 6, 23, 0.45);
-        backdrop-filter: blur(4px);
-      }
-      .overlay.show {
-        display: flex;
-        z-index: 20000;
-      }
-      .spinner {
-        width: 84px;
-        height: 84px;
-        border-radius: 12px;
-        padding: 12px;
-        background: linear-gradient(
-          180deg,
-          rgba(255, 255, 255, 0.03),
-          rgba(255, 255, 255, 0.01)
-        );
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        color: var(--muted);
-      }
-      .dots {
-        display: inline-block;
-        width: 36px;
-        height: 36px;
-        position: relative;
-      }
-      .dots div {
-        position: absolute;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: var(--accent);
-        animation: dots 1s infinite ease-in-out;
-      }
-      .dots div:nth-child(2) {
-        left: 12px;
-        animation-delay: 0.12s;
-      }
-      .dots div:nth-child(3) {
-        left: 24px;
-        animation-delay: 0.24s;
-      }
-      @keyframes dots {
-        0%,
-        80%,
-        100% {
-          transform: scale(0);
+        .chart-container {
+            height: 400px;
         }
-        40% {
-          transform: scale(1);
-        }
-      }
-
-      pre.output {
-        background: rgba(0, 0, 0, 0.35);
-        padding: 12px;
-        border-radius: 8px;
-        font-size: 13px;
-        max-height: 360px;
-        overflow: auto;
-        color: #dbeafe;
-      }
     </style>
-  </head>
-  <body class="light">
-    <div class="overlay" id="overlay">
-      <div class="spinner">
-        <div class="dots">
-          <div></div>
-          <div></div>
-          <div></div>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row">
+            <!-- Sidebar -->
+            <nav class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
+                <div class="position-sticky pt-3">
+                    <h4 class="px-3">Will It Rain?</h4>
+                    
+                    <div id="map" class="mx-3 my-3"></div>
+
+                    <div class="px-3">
+                        <div class="mb-3">
+                            <label for="location-coords" class="form-label">Selected Location</label>
+                            <input type="text" id="location-coords" class="form-control" readonly>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="varSelect" class="form-label">Weather Condition</label>
+                            <select id="varSelect" class="form-select">
+                                <option value="t2m_max">Very Hot Day</option>
+                                <option value="t2m_min">Very Cold Day</option>
+                                <option value="prectotcorr">Very Wet Day</option>
+                                <option value="ws10m">Very Windy Day</option>
+                                <option value="heat_index">Very Uncomfortable Day</option>
+                            </select>
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="doy" class="form-label">Day of Year</label>
+                            <input id="doy" type="number" class="form-control" min="1" max="366" value="196">
+                        </div>
+
+                        <div class="mb-3">
+                            <label for="threshold" class="form-label">Threshold</label>
+                            <input id="threshold" type="number" class="form-control" step="0.1" value="30">
+                        </div>
+
+                        <div class="d-grid gap-2">
+                            <button id="runBtn" class="btn btn-primary">Get Probability & Trend</button>
+                        </div>
+                    </div>
+                </div>
+            </nav>
+
+            <!-- Main content -->
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+                <div class="pt-3 pb-2 mb-3 border-bottom">
+                    <h1 class="h2">Results</h1>
+                </div>
+
+                <div class="card mb-4">
+                    <div class="card-header">Summary</div>
+                    <div class="card-body">
+                        <p id="summary">Select a location and click "Get Probability & Trend" to see results.</p>
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">Annual Values + Linear Fit</div>
+                            <div class="card-body">
+                                <div id="annualChart" class="chart-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-lg-6">
+                        <div class="card mb-4">
+                            <div class="card-header">Decadal Summary</div>
+                            <div class="card-body">
+                                <div id="decadalChart" class="chart-container"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Raw API Response</div>
+                    <div class="card-body">
+                        <pre id="outputJson" class="bg-dark text-light p-3 rounded">Raw JSON response will appear here</pre>
+                    </div>
+                </div>
+            </main>
         </div>
-        <div class="meta">Fetching data…</div>
-      </div>
     </div>
 
-    <div class="app" role="application" aria-label="Will it rain frontend">
-      <aside class="sidebar">
-        <div class="topbar">
-          <div>
-            <div class="title">☁️ Will It Rain On My Parade?</div>
-            <div class="subtitle">
-              Query historical weather & probability for outdoor planning
-            </div>
-          </div>
-          <div
-            style="
-              display: flex;
-              flex-direction: column;
-              gap: 6px;
-              align-items: flex-end;
-            "
-          >
-            <button class="ghost" id="themeBtn">Toggle theme</button>
-            <div class="meta">v1.1</div>
-          </div>
-        </div>
-
-        <div id="map" aria-label="Map showing selected location"></div>
-
-        <div class="card" style="padding: 12px">
-          <div
-            style="
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-            "
-          >
-            <div>
-              <div class="meta">Selected Location</div>
-              <div class="coords" id="location-coords">12.970, 77.590</div>
-            </div>
-            <div><button class="ghost" id="locBtn">Center</button></div>
-          </div>
-        </div>
-
-        <div class="card">
-          <label for="varSelect">Weather Condition</label>
-          <select id="varSelect" style="background-color: var(--accent);">
-            <option value="t2m_max">Very Hot Day</option>
-            <option value="t2m_min">Very Cold Day</option>
-            <option value="prectotcorr">Very Wet Day</option>
-            <option value="ws10m">Very Windy Day</option>
-            <option value="heat_index">Very Uncomfortable Day</option>
-          </select>
-
-          <div style="margin-top: 12px">
-            <label class="meta">Date Mode</label>
-            <div style="display: flex; gap: 10px; margin-top: 6px">
-              <label
-                ><input
-                  id="modeDay"
-                  type="radio"
-                  name="mode"
-                  value="day"
-                  checked
-                />
-                Single Day</label
-              >
-              <label
-                ><input id="modeRange" type="radio" name="mode" value="range" />
-                Date Range</label
-              >
-            </div>
-          </div>
-
-          <div id="dayRow" style="margin-top: 12px">
-            <label for="doy">Day of Year</label>
-            <input id="doy" type="number" min="1" max="366" value="196" />
-          </div>
-
-          <div id="rangeRow" style="display: none; margin-top: 12px">
-            <label>Day of Year Range</label>
-            <div
-              style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px"
-            >
-              <input
-                id="doyStart"
-                type="number"
-                min="1"
-                max="366"
-                value="152"
-              />
-              <input id="doyEnd" type="number" min="1" max="366" value="244" />
-            </div>
-            <label for="agg" style="margin-top: 8px">Aggregation</label>
-            <select id="agg">
-              <option value="mean">Mean</option>
-              <option value="sum">Sum</option>
-              <option value="max">Max</option>
-            </select>
-          </div>
-
-          <div style="margin-top: 12px">
-            <label for="threshold">Threshold</label>
-            <input id="threshold" type="number" step="0.1" value="30" />
-          </div>
-
-          <div style="display: flex; gap: 8px; margin-top: 12px">
-            <button id="runBtn" class="primary">Get Probability & Trend</button>
-            <button id="downloadBtn" class="ghost">Download</button>
-          </div>
-          <div style="margin-top: 12px; color: var(--muted)">
-            Tip: drag the marker on the map or use search to change location.
-          </div>
-        </div>
-      </aside>
-
-      <main class="main" role="main">
-        <div class="card">
-          <div
-            style="
-              display: flex;
-              justify-content: space-between;
-              align-items: center;
-            "
-          >
-            <div>
-              <h2>Results</h2>
-              <div class="lead" id="summary">
-                Select a location and click "Get Probability & Trend" to see
-                results.
-              </div>
-            </div>
-            <div class="meta">
-              Results are driven by your local API at
-              <code>127.0.0.1:8000</code>
-            </div>
-          </div>
-        </div>
-
-        <div class="chart-row">
-          <div
-            id="annualChart"
-            class="card"
-            style="flex: 1; min-height: 340px"
-          ></div>
-          <div
-            id="decadalChart"
-            class="card"
-            style="flex: 1; min-height: 340px"
-          ></div>
-        </div>
-
-        <div class="card" style="margin-top: 14px">
-          <h3 style="margin: 0 0 8px 0">Raw API Response</h3>
-          <pre class="output" id="outputJson">
-(Raw JSON response will appear here)</pre
-          >
-        </div>
-      </main>
-    </div>
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Plotly JS -->
+    <script src="https://cdn.plot.ly/plotly-2.24.1.min.js"></script>
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script>
-      (async function () {
-        // Utility: fetch with timeout
-        function fetchWithTimeout(url, opts = {}, timeout = 15000) {
-          return Promise.race([
-            fetch(url, opts),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error("Fetch timeout")), timeout)
-            ),
-          ]);
-        }
+        $(document).ready(function() {
+            const API_BASE_URL = '/';
 
-        const SERVER = "/weather";
+            // Initialize map
+            const defaultLat = 12.97, defaultLon = 77.59;
+            const map = L.map('map').setView([defaultLat, defaultLon], 6);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            }).addTo(map);
+            let marker = L.marker([defaultLat, defaultLon], { draggable: true }).addTo(map);
 
-        // Initialize map
-        const defaultLat = 12.97,
-          defaultLon = 77.59;
-        const map = L.map("map", { preferCanvas: false }).setView(
-          [defaultLat, defaultLon],
-          6
-        );
-
-        // Robust tile layer + fallback
-        const primaryTiles =
-          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png";
-        const fallbackTiles =
-          "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png";
-        let tileLayer = L.tileLayer(primaryTiles, {
-          maxZoom: 19,
-          attribution: "© OpenStreetMap",
-        }).addTo(map);
-
-        tileLayer.on("tileerror", function (e) {
-          console.warn("Tile error, switching to fallback provider", e);
-          try {
-            map.removeLayer(tileLayer);
-          } catch (e) {}
-          tileLayer = L.tileLayer(fallbackTiles, {
-            maxZoom: 19,
-            attribution: "© CARTO",
-          }).addTo(map);
-        });
-
-        // Marker
-        let marker = L.marker([defaultLat, defaultLon], {
-          draggable: true,
-        }).addTo(map);
-
-        // GeoSearch control — put in top-left so it's visible and set dark styling handled by CSS above
-        try {
-          const provider = new GeoSearch.OpenStreetMapProvider();
-          const searchControl = new GeoSearch.GeoSearchControl({
-            provider,
-            style: "bar",
-            showMarker: false,
-            retainZoomLevel: false,
-            searchLabel: "Search location",
-            keepResult: true,
-            autoClose: true,
-            position: "topleft",
-          });
-          map.addControl(searchControl);
-          // The geosearch control emits a "geosearch/showlocation" event on the map
-        } catch (err) {
-          console.warn("geosearch init failed:", err);
-        }
-
-        // UI refs
-        const coordsEl = document.getElementById("location-coords");
-        const modeDay = document.getElementById("modeDay"),
-          modeRange = document.getElementById("modeRange");
-        const dayRow = document.getElementById("dayRow"),
-          rangeRow = document.getElementById("rangeRow");
-        const varSelect = document.getElementById("varSelect"),
-          doyInput = document.getElementById("doy");
-        const runBtn = document.getElementById("runBtn"),
-          downloadBtn = document.getElementById("downloadBtn");
-        const outputJson = document.getElementById("outputJson"),
-          summaryEl = document.getElementById("summary");
-        const thresholdEl = document.getElementById("threshold"),
-          aggEl = document.getElementById("agg");
-        const overlay = document.getElementById("overlay"),
-          locBtn = document.getElementById("locBtn");
-        const themeBtn = document.getElementById("themeBtn");
-
-        function updateCoordsText() {
-          const p = marker.getLatLng();
-          coordsEl.innerText = `${p.lat.toFixed(3)}, ${p.lng.toFixed(3)}`;
-        }
-        updateCoordsText();
-        marker.on("dragend", () => updateCoordsText());
-        locBtn.addEventListener("click", () =>
-          map.setView(marker.getLatLng(), Math.max(map.getZoom(), 10))
-        );
-
-        // When geosearch shows a location we'll update marker & view
-        map.on("geosearch/showlocation", function (evt) {
-          const loc =
-            evt.location ||
-            evt.location?.result ||
-            evt.location?.location ||
-            evt;
-          if (loc?.x && loc?.y) {
-            marker.setLatLng([loc.y, loc.x]);
-            map.setView([loc.y, loc.x], Math.max(map.getZoom(), 10));
-          } else if (evt.location && evt.location.lat && evt.location.lng) {
-            marker.setLatLng([evt.location.lat, evt.location.lng]);
-            map.setView(
-              [evt.location.lat, evt.location.lng],
-              Math.max(map.getZoom(), 10)
-            );
-          } else {
-            // some providers pass lat/lon differently; safe attempt:
-            try {
-              const ll = evt.location || {};
-              if (ll.lat && ll.lon) {
-                marker.setLatLng([ll.lat, ll.lon]);
-                map.setView([ll.lat, ll.lon], Math.max(map.getZoom(), 10));
-              }
-            } catch (e) {}
-          }
-          updateCoordsText();
-          // after moving, some browsers need invalidateSize to draw tiles
-          setTimeout(() => {
-            try {
-              map.invalidateSize();
-            } catch (e) {}
-          }, 250);
-        });
-
-        // Theme toggle
-        themeBtn.addEventListener("click", () =>
-          document.body.classList.toggle("light")
-        );
-
-        // Mode toggle
-        function toggleMode() {
-          const isRange = modeRange.checked;
-          dayRow.style.display = isRange ? "none" : "block";
-          rangeRow.style.display = isRange ? "block" : "none";
-        }
-        modeDay.addEventListener("change", toggleMode);
-        modeRange.addEventListener("change", toggleMode);
-
-        // overlay helper
-        function showOverlay(show = true, text) {
-          if (show) {
-            overlay.classList.add("show");
-            if (text) overlay.querySelector(".meta").innerText = text;
-          } else overlay.classList.remove("show");
-        }
-
-        // make sure map draws correctly after layout. invalidateSize a few times to be safe.
-        function ensureMapDraw() {
-          setTimeout(() => {
-            try {
-              map.invalidateSize();
-            } catch (e) {}
-          }, 120);
-          setTimeout(() => {
-            try {
-              map.invalidateSize();
-            } catch (e) {}
-          }, 420);
-        }
-        // call on load and on resize
-        ensureMapDraw();
-        window.addEventListener("resize", ensureMapDraw);
-
-        // update percentiles — will use fetchWithTimeout
-        async function updateThresholds() {
-          const v = varSelect.value;
-          const doy = parseInt(doyInput.value) || 196;
-          const pos = marker.getLatLng();
-          const lat = pos.lat,
-            lon = pos.lng;
-          const url = `${SERVER}/percentiles?lat=${lat}&lon=${lon}&var=${v}&doy=${doy}`;
-          try {
-            thresholdEl.value = "...";
-            const resp = await fetchWithTimeout(
-              url,
-              { cache: "no-store" },
-              10000
-            );
-            if (!resp.ok)
-              throw new Error("Network response was not ok: " + resp.status);
-            const data = await resp.json();
-            let threshold = 30;
-            if (v === "t2m_max") threshold = data.p90 ?? data.p50 ?? threshold;
-            if (v === "t2m_min") threshold = data.p10 ?? data.p50 ?? threshold;
-            if (v === "prectotcorr") threshold = data.p90 ?? data.p50 ?? 1;
-            if (v === "ws10m") threshold = data.p90 ?? data.p50 ?? 5;
-            if (v === "heat_index") threshold = data.p90 ?? data.p50 ?? 30;
-            thresholdEl.value = Number(threshold).toFixed(1);
-          } catch (err) {
-            console.warn("percentiles error:", err);
-            // leave threshold as-is if request failed
-          }
-        }
-
-        varSelect.addEventListener("change", updateThresholds);
-        doyInput.addEventListener("change", updateThresholds);
-
-        // plotting helpers (same as before but compact)
-        function drawAnnualScatterAndFit(targetId, years, values) {
-          const pts = (years || [])
-            .map((y, i) => ({ x: y, y: values?.[i] }))
-            .filter((p) => p.y !== null && p.y !== undefined && !isNaN(p.y));
-          const xs = pts.map((p) => p.x);
-          const ys = pts.map((p) => p.y);
-
-          const scatter = {
-            x: xs,
-            y: ys,
-            mode: "markers",
-            name: "Annual values",
-            marker: { size: 6 },
-          };
-
-          const layout = {
-            title: "Annual Values",
-            margin: { t: 36, l: 50, r: 20, b: 50 },
-            height: 340,
-            autosize: true,
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(0,0,0,0)",
-          };
-
-          const data = [scatter];
-
-          if (xs.length >= 2) {
-            // compute linear fit
-            const n = xs.length;
-            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
-            for (let i = 0; i < n; i++) {
-              sumX += xs[i];
-              sumY += ys[i];
-              sumXY += xs[i] * ys[i];
-              sumXX += xs[i] * xs[i];
+            function updateCoordsText() {
+                const pos = marker.getLatLng();
+                $('#location-coords').val(`${pos.lat.toFixed(3)}, ${pos.lng.toFixed(3)}`);
             }
-            const meanX = sumX / n,
-              meanY = sumY / n;
-            const denom = sumXX - n * meanX * meanX || 1e-12;
-            const slope = (sumXY - n * meanX * meanY) / denom;
-            const intercept = meanY - slope * meanX;
-            const fitX = [Math.min(...xs), Math.max(...xs)];
-            const fitY = fitX.map((x) => slope * x + intercept);
-            const fit = {
-              x: fitX,
-              y: fitY,
-              mode: "lines",
-              name: `Linear Fit (slope=${(slope || 0).toFixed(4)})`,
-              line: { width: 2 },
-            };
-            data.push(fit);
-            layout.title = "Annual Values + Linear Fit";
-          }
+            updateCoordsText();
+            marker.on('dragend', updateCoordsText);
 
-          // Use Plotly.react to update plot in-place (no DOM growth)
-          Plotly.react(targetId, data, layout, { responsive: true });
-        }
+            function updateThresholds() {
+                const lat = marker.getLatLng().lat;
+                const lon = marker.getLatLng().lng;
+                const variable = $('#varSelect').val();
+                const doy = $('#doy').val();
 
-        window.addEventListener("resize", () => {
-          const a = document.getElementById("annualChart");
-          const d = document.getElementById("decadalChart");
-          if (a) Plotly.Plots.resize(a);
-          if (d) Plotly.Plots.resize(d);
-        });
+                $.get(API_BASE_URL + 'percentiles', { lat, lon, var: variable, doy })
+                    .done(function(data) {
+                        let threshold = 30; // Default
+                        if (variable === 't2m_max') threshold = data.p90 ?? data.p50 ?? threshold;
+                        if (variable === 't2m_min') threshold = data.p10 ?? data.p50 ?? threshold;
+                        if (variable === 'prectotcorr') threshold = data.p90 ?? data.p50 ?? 1;
+                        if (variable === 'ws10m') threshold = data.p90 ?? data.p50 ?? 5;
+                        if (variable === 'heat_index') threshold = data.p90 ?? data.p50 ?? 30;
+                        $('#threshold').val(Number(threshold).toFixed(1));
+                    })
+                    .fail(function() {
+                        console.warn('Could not fetch percentiles to update threshold.');
+                    });
+            }
 
-        function plotDecadalFromTrendResp(trendResp, varName, threshold) {
-          const dec =
-            trendResp && trendResp.decadal_summary
-              ? trendResp.decadal_summary
-              : [];
-          const layout = {
-            title: dec.length
-              ? `Decadal Probability > ${threshold}`
-              : "Decadal Summary (no data)",
-            margin: { t: 36, l: 20, r: 20, b: 60 },
-            height: 340,
-            autosize: true,
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(0,0,0,0)",
-          };
+            $('#varSelect, #doy').on('change', updateThresholds);
+            updateThresholds(); // Initial call
 
-          if (!dec.length) {
-            // empty dataset (keeps same layout, avoids growth)
-            Plotly.react(
-              "decadalChart",
-              [{ x: [], y: [], type: "bar" }],
-              layout,
-              { responsive: true }
-            );
-            return;
-          }
+            // Fetch data and update charts
+            $('#runBtn').on('click', function() {
+                const lat = marker.getLatLng().lat;
+                const lon = marker.getLatLng().lng;
+                const variable = $('#varSelect').val();
+                const doy = $('#doy').val();
+                const threshold = $('#threshold').val();
 
-          const decades = dec.map((d) => `${d.decade_start}-${d.decade_end}`);
-          const isProb = dec[0].hasOwnProperty("prob_exceed");
-          const vals = dec.map((d) => (isProb ? d.prob_exceed : d.mean_value));
-          const trace = { x: decades, y: vals, type: "bar" };
+                // Show loading state
+                $('#runBtn').prop('disabled', true).text('Loading...');
+                $('#outputJson').text('Fetching data...');
+                $('#summary').text('(fetching...)');
 
-          Plotly.react("decadalChart", [trace], layout, { responsive: true });
-        }
+                // API requests
+                const probRequest = $.get(API_BASE_URL + 'probability', { lat, lon, var: variable, doy, threshold, n_boot: 500 });
+                const trendRequest = $.get(API_BASE_URL + 'trend', { lat, lon, var: variable, doy, threshold });
+                const histRequest = $.get(API_BASE_URL + 'history', { lat, lon, var: variable, doy });
 
-        function plotDecadalFromTrendResp(trendResp, varName, threshold) {
-          const dec =
-            trendResp && trendResp.decadal_summary
-              ? trendResp.decadal_summary
-              : [];
-          if (!dec.length) {
-            Plotly.newPlot("decadalChart", [], {
-              title: "Decadal Summary (no data)",
-              margin: { t: 36 },
+                $.when(probRequest, trendRequest, histRequest).done(function(probData, trendData, histData) {
+                    const allData = {
+                        probability: probData[0],
+                        trend: trendData[0],
+                        history: histData[0]
+                    };
+                    $('#outputJson').text(JSON.stringify(allData, null, 2));
+
+                    // Render summary
+                    renderSummary(probData[0], trendData[0]);
+
+                    // Update charts
+                    drawAnnualScatterAndFit('annualChart', histData[0].years, histData[0].values);
+                    plotDecadalFromTrendResp('decadalChart', trendData[0], variable, threshold);
+
+                }).fail(function(jqXHR, textStatus, errorThrown) {
+                    $('#outputJson').text(`Error: ${textStatus} - ${errorThrown}`);
+                    $('#summary').text(`Error: ${textStatus} - ${errorThrown}`);
+                }).always(function() {
+                    // Restore button state
+                    $('#runBtn').prop('disabled', false).text('Get Probability & Trend');
+                });
             });
-            return;
-          }
-          const decades = dec.map((d) => `${d.decade_start}-${d.decade_end}`);
-          const isProb = dec[0].hasOwnProperty("prob_exceed");
-          const vals = dec.map((d) => (isProb ? d.prob_exceed : d.mean_value));
-          const trace = { x: decades, y: vals, type: "bar" };
-          const title = isProb
-            ? `Decadal Probability > ${threshold}`
-            : `Decadal Mean ${varName}`;
-          Plotly.newPlot("decadalChart", [trace], { title, margin: { t: 36 } });
-        }
 
-        // Run query
-        let apiData = {};
-        async function runQuery() {
-          const v = varSelect.value;
-          const isRange = modeRange.checked;
-          const threshold = parseFloat(thresholdEl.value) || 0;
-          const agg = aggEl?.value || "mean";
-          const pos = marker.getLatLng();
-          const lat = pos.lat,
-            lon = pos.lng;
-
-          let probUrl = "",
-            trendUrl = "",
-            histUrl = "";
-          if (isRange) {
-            const ds = parseInt(document.getElementById("doyStart").value) || 1;
-            const de = parseInt(document.getElementById("doyEnd").value) || 366;
-            probUrl = `${SERVER}/probability?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-              v
-            )}&doy_start=${ds}&doy_end=${de}&agg=${encodeURIComponent(
-              agg
-            )}&threshold=${encodeURIComponent(threshold)}&n_boot=500`;
-            trendUrl = `${SERVER}/trend?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-              v
-            )}&doy_start=${ds}&doy_end=${de}&agg=${encodeURIComponent(
-              agg
-            )}&threshold=${encodeURIComponent(threshold)}&decade_span=10`;
-            histUrl = `${SERVER}/history?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-              v
-            )}&doy_start=${ds}&doy_end=${de}&agg=${encodeURIComponent(agg)}`;
-          } else {
-            const doy = parseInt(doyInput.value) || 196;
-            if (v === "heat_index") {
-              histUrl = `${SERVER}/discomfort_index?lat=${lat}&lon=${lon}&doy=${doy}`;
-              probUrl = `${SERVER}/probability?lat=${lat}&lon=${lon}&var=heat_index&doy=${doy}&threshold=${encodeURIComponent(
-                threshold
-              )}&n_boot=500`;
-              trendUrl = `${SERVER}/trend?lat=${lat}&lon=${lon}&var=heat_index&doy=${doy}&threshold=${encodeURIComponent(
-                threshold
-              )}&decade_span=10`;
-            } else {
-              probUrl = `${SERVER}/probability?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-                v
-              )}&doy=${doy}&threshold=${encodeURIComponent(
-                threshold
-              )}&n_boot=500`;
-              trendUrl = `${SERVER}/trend?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-                v
-              )}&doy=${doy}&threshold=${encodeURIComponent(
-                threshold
-              )}&decade_span=10`;
-              histUrl = `${SERVER}/history?lat=${lat}&lon=${lon}&var=${encodeURIComponent(
-                v
-              )}&doy=${doy}`;
+            function renderSummary(prob, trend) {
+                if (!prob || !prob.ok) {
+                    $('#summary').text('Probability not available: ' + (prob && prob.error ? prob.error : 'No data'));
+                    return;
+                }
+                const p = Math.round((prob.probability || 0) * 1000) / 10;
+                const years = prob.years_used || (prob.years && prob.years.length) || 'N/A';
+                const exceed = prob.exceed_count ?? 'N/A';
+                let s = `Probability of exceeding threshold: ${p}% (based on ${years} years, ${exceed} occurrences).\n`;
+                if (trend && trend.value_trend) {
+                    const slope = Number(trend.value_trend.slope_per_year || 0);
+                    s += `Value trend: ${slope.toFixed(4)} units/year. p-value=${Number(trend.value_trend.p_value || 0).toFixed(3)}`;
+                }
+                $('#summary').text(s);
             }
-          }
 
-          runBtn.setAttribute("disabled", "true");
-          runBtn.style.opacity = 0.7;
-          showOverlay(true, "Fetching data…");
-          summaryEl.innerText = "(fetching...)";
+            function drawAnnualScatterAndFit(targetId, years, values) {
+                const trace = {
+                    x: years,
+                    y: values,
+                    mode: 'markers',
+                    type: 'scatter',
+                    name: 'Annual Values'
+                };
+                const layout = {
+                    title: 'Annual Values + Linear Fit',
+                    margin: { t: 40, l: 50, r: 20, b: 50 }
+                };
+                Plotly.react(targetId, [trace], layout, { responsive: true });
+            }
 
-          try {
-            const results = await Promise.allSettled([
-              fetchWithTimeout(
-                probUrl,
-                { cache: "no-store" },
-                20000
-              ).then(
-                (r) =>
-                  r.ok
-                    ? r.json()
-                    : Promise..reject(new Error("Prob resp " + r.status))
-              ),
-              fetchWithTimeout(
-                trendUrl,
-                { cache: "no-store" },
-                20000
-              ).then(
-                (r) =>
-                  r.ok
-                    ? r.json()
-                    : Promise.reject(new Error("Trend resp " + r.status))
-              ),
-              fetchWithTimeout(
-                histUrl,
-                { cache: "no-store" },
-                20000
-              ).then(
-                (r) =>
-                  r.ok
-                    ? r.json()
-                    : Promise.reject(new Error("Hist resp " + r.status))
-              ),
-            ]);
+            function plotDecadalFromTrendResp(targetId, trendResp, varName, threshold) {
+                const decadalData = trendResp.decadal_summary || [];
+                const decades = decadalData.map(d => `${d.decade_start}-${d.decade_end}`);
+                const isProb = decadalData.length > 0 && decadalData[0].hasOwnProperty('prob_exceed');
+                const values = decadalData.map(d => isProb ? d.prob_exceed : d.mean_value);
 
-            const probRespRaw =
-              results[0].status === "fulfilled"
-                ? results[0].value
-                : { ok: false, error: String(results[0].reason) };
-            const trendRespRaw =
-              results[1].status === "fulfilled"
-                ? results[1].value
-                : { ok: false, error: String(results[1].reason) };
-            const histRespRaw =
-              results[2].status === "fulfilled"
-                ? results[2].value
-                : { ok: false, error: String(results[2].reason) };
+                const trace = {
+                    x: decades,
+                    y: values,
+                    type: 'bar',
+                    name: 'Decadal Summary'
+                };
+                const layout = {
+                    title: isProb ? `Decadal Probability > ${threshold}` : `Decadal Mean ${varName}`,
+                    margin: { t: 40, l: 50, r: 20, b: 50 }
+                };
+                Plotly.react(targetId, [trace], layout, { responsive: true });
+            }
 
-            apiData = {
-              probability: probRespRaw,
-              trend: trendRespRaw,
-              history: histRespRaw,
-            };
-            outputJson.innerText = JSON.stringify(apiData, null, 2);
-
-            renderSummary(probRespRaw, trendRespRaw);
-            drawAnnualScatterAndFit(
-              "annualChart",
-              histRespRaw?.years || [],
-              histRespRaw?.values || []
-            );
-            plotDecadalFromTrendResp(trendRespRaw, v, threshold);
-          } catch (err) {
-            console.error("runQuery error", err);
-            summaryEl.innerText =
-              "Error contacting API: " + (err.message || err);
-          } finally {
-            runBtn.removeAttribute("disabled");
-            runBtn.style.opacity = 1;
-            showOverlay(false);
-            // ensure map redraws after heavy operations
-            ensureMapDraw();
-          }
-        }
-
-        function renderSummary(prob, trend) {
-          if (!prob || !prob.ok) {
-            summaryEl.innerText =
-              "Probability not available: " +
-              (prob && prob.error ? prob.error : "No data");
-            return;
-          }
-          const p = Math.round((prob.probability || 0) * 1000) / 10;
-          const years =
-            prob.years_used || (prob.years && prob.years.length) || "N/A";
-          const exceed = prob.exceed_count ?? "N/A";
-          let s = `Probability of exceeding threshold: ${p}% (based on ${years} years, ${exceed} occurrences)\n`;
-          if (trend && trend.value_trend) {
-            const slope = Number(trend.value_trend.slope_per_year || 0);
-            s += `Value trend: ${slope.toFixed(4)} units/year. p-value=${Number(
-              trend.value_trend.p_value || 0
-            ).toFixed(3)}`;
-          }
-          summaryEl.innerText = s;
-        }
-
-        // download handler
-        downloadBtn.addEventListener("click", () => {
-          const dataStr =
-            "data:text/json;charset=utf-8," +
-            encodeURIComponent(JSON.stringify(apiData, null, 2));
-          const a = document.createElement("a");
-          a.href = dataStr;
-          a.download = "weather_data.json";
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
+            // Initial chart state
+            drawAnnualScatterAndFit('annualChart', [], []);
+            plotDecadalFromTrendResp('decadalChart', {}, '', 0);
         });
-
-        // initial calls
-        await updateThresholds().catch(() => {});
-        drawAnnualScatterAndFit("annualChart", [], []);
-        plotDecadalFromTrendResp({}, "var", 0);
-
-        // wire run button
-        runBtn.addEventListener("click", runQuery);
-
-        // final ensure map draws
-        ensureMapDraw();
-      })();
     </script>
-  </body>
+</body>
 </html>
