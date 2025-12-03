@@ -7,6 +7,7 @@ from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render
 from scipy.stats import linregress
 
+from .data_fetcher import fetch_and_store_data
 from .models import HistoricalDataPoint
 
 # --- Template View (for the main interface) ---
@@ -101,6 +102,20 @@ def _sanitize_value(v):
 def get_yearly_data(lat, lon, var, doy=None, doy_start=None, doy_end=None, agg="mean"):
     """Fetches and processes yearly data from the database."""
     qs = HistoricalDataPoint.objects.filter(latitude=lat, longitude=lon)
+
+    # If no data exists for this location, fetch it now.
+    if not qs.exists():
+        print(f"No data found for {lat}, {lon}. Fetching from source...")
+        start_date = "19900101"
+        end_date = datetime.now().strftime("%Y%m%d")
+        try:
+            fetch_and_store_data(lat, lon, start_date, end_date)
+            # After fetching, re-query the database.
+            qs = HistoricalDataPoint.objects.filter(latitude=lat, longitude=lon)
+        except Exception as e:
+            print(f"Failed to fetch or store data: {e}")
+            # Return an empty series if fetching fails to avoid further errors.
+            return pd.Series([], dtype=float)
 
     if doy:
         qs = qs.filter(day_of_year=doy)

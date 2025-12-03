@@ -7,7 +7,7 @@ A Django-based web application that displays historical weather data.
 1.  **Clone the repository:**
     ```bash
     git clone <repository-url>
-    cd Will_it_rain_on_my_parade
+    cd weather-prediction-planner-toolkit
     ```
 
 2.  **Create and activate a virtual environment:**
