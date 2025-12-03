@@ -122,3 +122,14 @@ STATIC_URL = 'static/'
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# Simple in-memory cache for development (used for percentiles/trend caching)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        'LOCATION': 'weather-toolkit-cache',
+    }
+}
+
+# Celery configuration (uses Redis by default). Override with env var if needed.
+# No Celery/Redis configuration — using local SQLite and Python-only workers

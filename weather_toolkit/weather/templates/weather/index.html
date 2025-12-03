@@ -23,6 +23,27 @@
         .chart-container {
             height: 400px;
         }
+        .spinner-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 9999;
+            align-items: center;
+            justify-content: center;
+        }
+        .spinner-overlay.show {
+            display: flex;
+        }
+        .spinner-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 0.5rem;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -53,8 +74,8 @@
                         </div>
 
                         <div class="mb-3">
-                            <label for="doy" class="form-label">Day of Year</label>
-                            <input id="doy" type="number" class="form-control" min="1" max="366" value="196">
+                            <label for="dateInput" class="form-label">Date</label>
+                            <input id="dateInput" type="date" class="form-control">
                         </div>
 
                         <div class="mb-3">
@@ -120,6 +141,14 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
+    <!-- Loading spinner overlay -->
+    <div id="loadingSpinner" class="spinner-overlay">
+        <div class="spinner-content">
+            <div class="spinner-border mb-3" role="status"></div>
+            <p id="spinnerText">Fetching data from NASA. This may take a minute...</p>
+        </div>
+    </div>
+
     <script>
         $(document).ready(function() {
             const API_BASE_URL = '/';
@@ -140,11 +169,47 @@
             updateCoordsText();
             marker.on('dragend', updateCoordsText);
 
+            // Helper to convert date string (YYYY-MM-DD) to day of year (1-366)
+            function dateToDayOfYear(dateStr) {
+                const date = new Date(dateStr + 'T00:00:00Z');
+                const start = new Date(date.getUTCFullYear(), 0, 0);
+                const diff = date - start;
+                const oneDay = 1000 * 60 * 60 * 24;
+                return Math.floor(diff / oneDay);
+            }
+
+            // Set default date to today
+            const today = new Date();
+            const todayStr = today.toISOString().split('T')[0];
+            $('#dateInput').val(todayStr);
+
+            // Restrict date picker to ±365 days from today
+            const minDate = new Date(today);
+            minDate.setDate(minDate.getDate() - 365);
+            const maxDate = new Date(today);
+            maxDate.setDate(maxDate.getDate() + 365);
+
+            $('#dateInput').attr('min', minDate.toISOString().split('T')[0]);
+            $('#dateInput').attr('max', maxDate.toISOString().split('T')[0]);
+
+            // Validate date selection on change
+            $('#dateInput').on('change', function() {
+                const selected = new Date($(this).val() + 'T00:00:00Z');
+                const diffTime = Math.abs(selected - today);
+                const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+                if (diffDays > 365) {
+                    alert('Please select a date within 365 days from today.');
+                    $(this).val(todayStr);
+                }
+            });
+
             function updateThresholds() {
                 const lat = marker.getLatLng().lat;
                 const lon = marker.getLatLng().lng;
                 const variable = $('#varSelect').val();
-                const doy = $('#doy').val();
+                const dateStr = $('#dateInput').val();
+                const doy = dateStr ? dateToDayOfYear(dateStr) : 196;
 
                 $.get(API_BASE_URL + 'percentiles', { lat, lon, var: variable, doy })
                     .done(function(data) {
@@ -161,65 +226,132 @@
                     });
             }
 
-            $('#varSelect, #doy').on('change', updateThresholds);
+            $('#varSelect, #dateInput').on('change', updateThresholds);
             updateThresholds(); // Initial call
+
+            // Polling logic for fetch in progress (202 responses)
+            let pollTimeout = null;
+            function pollApis(lat, lon, variable, doy, threshold, attempt = 0) {
+                const maxAttempts = 60; // ~5 minutes with 5-second intervals
+                if (attempt > maxAttempts) {
+                    $('#loadingSpinner').removeClass('show');
+                    $('#runBtn').prop('disabled', false).text('Get Probability & Trend');
+                    $('#summary').text('Fetch timed out. Please try again.');
+                    return;
+                }
+
+                const probRequest = $.get(API_BASE_URL + 'probability', { lat, lon, var: variable, doy, threshold, n_boot: 500 });
+                const trendRequest = $.get(API_BASE_URL + 'trend', { lat, lon, var: variable, doy, threshold });
+                const histRequest = $.get(API_BASE_URL + 'history', { lat, lon, var: variable, doy });
+
+                $.when(probRequest, trendRequest, histRequest).done(function(probData, trendData, histData) {
+                    // Check if any response has status 'accepted' (202)
+                    const hasAccepted = probData[0].status === 'accepted' || trendData[0].status === 'accepted' || histData[0].status === 'accepted';
+
+                    if (hasAccepted) {
+                        // Still fetching, retry in 5 seconds
+                        $('#spinnerText').text(`Fetching data from NASA. This may take a minute...`);
+                        pollTimeout = setTimeout(() => pollApis(lat, lon, variable, doy, threshold, attempt + 1), 5000);
+                    } else {
+                        // Data ready
+                        $('#loadingSpinner').removeClass('show');
+                        const allData = {
+                            probability: probData[0],
+                            trend: trendData[0],
+                            history: histData[0]
+                        };
+                        $('#outputJson').text(JSON.stringify(allData, null, 2));
+
+                        // Render summary
+                        renderSummary(probData[0], trendData[0]);
+
+                        // Update charts
+                        drawAnnualScatterAndFit('annualChart', histData[0].years, histData[0].values);
+                        plotDecadalFromTrendResp('decadalChart', trendData[0], variable, threshold);
+
+                        $('#runBtn').prop('disabled', false).text('Get Probability & Trend');
+                    }
+                }).fail(function(jqXHR, textStatus, errorThrown) {
+                    $('#loadingSpinner').removeClass('show');
+                    $('#outputJson').text(`Error: ${textStatus} - ${errorThrown}`);
+                    $('#summary').text(`Error: ${textStatus} - ${errorThrown}`);
+                    $('#runBtn').prop('disabled', false).text('Get Probability & Trend');
+                });
+            }
 
             // Fetch data and update charts
             $('#runBtn').on('click', function() {
                 const lat = marker.getLatLng().lat;
                 const lon = marker.getLatLng().lng;
                 const variable = $('#varSelect').val();
-                const doy = $('#doy').val();
+                const dateStr = $('#dateInput').val();
+                const doy = dateStr ? dateToDayOfYear(dateStr) : 196;
                 const threshold = $('#threshold').val();
 
                 // Show loading state
-                $('#runBtn').prop('disabled', true).text('Loading...');
+                $('#runBtn').prop('disabled', true);
                 $('#outputJson').text('Fetching data...');
                 $('#summary').text('(fetching...)');
+                $('#loadingSpinner').addClass('show');
 
-                // API requests
-                const probRequest = $.get(API_BASE_URL + 'probability', { lat, lon, var: variable, doy, threshold, n_boot: 500 });
-                const trendRequest = $.get(API_BASE_URL + 'trend', { lat, lon, var: variable, doy, threshold });
-                const histRequest = $.get(API_BASE_URL + 'history', { lat, lon, var: variable, doy });
-
-                $.when(probRequest, trendRequest, histRequest).done(function(probData, trendData, histData) {
-                    const allData = {
-                        probability: probData[0],
-                        trend: trendData[0],
-                        history: histData[0]
-                    };
-                    $('#outputJson').text(JSON.stringify(allData, null, 2));
-
-                    // Render summary
-                    renderSummary(probData[0], trendData[0]);
-
-                    // Update charts
-                    drawAnnualScatterAndFit('annualChart', histData[0].years, histData[0].values);
-                    plotDecadalFromTrendResp('decadalChart', trendData[0], variable, threshold);
-
-                }).fail(function(jqXHR, textStatus, errorThrown) {
-                    $('#outputJson').text(`Error: ${textStatus} - ${errorThrown}`);
-                    $('#summary').text(`Error: ${textStatus} - ${errorThrown}`);
-                }).always(function() {
-                    // Restore button state
-                    $('#runBtn').prop('disabled', false).text('Get Probability & Trend');
-                });
+                // Start polling (first attempt immediately)
+                pollApis(lat, lon, variable, doy, threshold, 0);
             });
 
             function renderSummary(prob, trend) {
                 if (!prob || !prob.ok) {
-                    $('#summary').text('Probability not available: ' + (prob && prob.error ? prob.error : 'No data'));
+                    const message = prob && prob.error ? prob.error : 'No data available.';
+                    $('#summary').html(`<strong>Data unavailable:</strong> ${message}`);
                     return;
                 }
-                const p = Math.round((prob.probability || 0) * 1000) / 10;
-                const years = prob.years_used || (prob.years && prob.years.length) || 'N/A';
-                const exceed = prob.exceed_count ?? 'N/A';
-                let s = `Probability of exceeding threshold: ${p}% (based on ${years} years, ${exceed} occurrences).\n`;
+
+                // Read context from the UI
+                const variable = $('#varSelect').val();
+                const dateStr = $('#dateInput').val() || 'the selected date';
+                const threshold = $('#threshold').val();
+
+                // Friendly variable names
+                const varLabels = {
+                    't2m_max': 'very hot day (daily maximum temperature)',
+                    't2m_min': 'very cold day (daily minimum temperature)',
+                    't2m': 'daily mean temperature',
+                    'prectotcorr': 'very wet day (daily precipitation)',
+                    'ws10m': 'very windy day (10 m wind speed)',
+                    'rh2m': 'relative humidity',
+                    'heat_index': 'very uncomfortable day (heat index)'
+                };
+
+                const friendlyVar = varLabels[variable] || variable;
+
+                // Probability formatting
+                const probVal = (prob.probability || 0) * 100;
+                const probStr = `${probVal.toFixed(1)}%`;
+
+                const yearsUsed = prob.years_used || (prob.years && prob.years.length) || 0;
+                const exceedCount = prob.exceed_count ?? 0;
+
+                // Build human-friendly sentences
+                let lines = [];
+                lines.push(`<strong>Estimated chance</strong> on <strong>${dateStr}</strong> of ${friendlyVar} exceeding the threshold (${threshold}): <strong>${probStr}</strong>.`);
+                lines.push(`This estimate uses <strong>${yearsUsed}</strong> years of historical data; the event occurred in <strong>${exceedCount}</strong> of those years.`);
+
+                // Trend interpretation
                 if (trend && trend.value_trend) {
                     const slope = Number(trend.value_trend.slope_per_year || 0);
-                    s += `Value trend: ${slope.toFixed(4)} units/year. p-value=${Number(trend.value_trend.p_value || 0).toFixed(3)}`;
+                    const pval = Number(trend.value_trend.p_value || 0);
+                    const direction = slope > 0 ? 'increasing' : slope < 0 ? 'decreasing' : 'no clear';
+                    const significance = pval < 0.05 ? 'statistically significant' : 'not statistically significant';
+                    const slopeStr = `${Math.abs(slope).toFixed(3)} units/year`;
+
+                    if (Math.abs(slope) < 1e-6) {
+                        lines.push(`Long-term trend: no clear change detected.`);
+                    } else {
+                        lines.push(`Long-term trend: ${direction} by about ${slopeStr} per year (p = ${pval.toFixed(3)}, ${significance}).`);
+                    }
                 }
-                $('#summary').text(s);
+
+                // Set HTML with line breaks for readability
+                $('#summary').html(lines.join('<br>'));
             }
 
             function drawAnnualScatterAndFit(targetId, years, values) {

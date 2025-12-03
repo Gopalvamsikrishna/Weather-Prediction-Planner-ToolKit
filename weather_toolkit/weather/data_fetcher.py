@@ -5,8 +5,13 @@ from pathlib import Path
 
 import pandas as pd
 import requests
+from filelock import FileLock, Timeout
 
 from .models import HistoricalDataPoint
+
+class FetchInProgressError(Exception):
+    """Custom exception to indicate that a fetch is already in progress."""
+    pass
 
 # --- NASA POWER API Configuration and Fetching Logic ---
 
@@ -104,84 +109,86 @@ def fetch_and_store_data(
 ):
     """
     Fetches data from the POWER API and stores it in the database.
-    Includes a locking mechanism to prevent concurrent fetches for the same location.
-    If a lock is found, it will wait up to `max_wait_seconds` for it to be released.
+    Includes a global locking mechanism to prevent any concurrent data fetches,
+    which avoids database write conflicts with SQLite.
 
     Returns:
         bool: True if data was successfully fetched and stored, False otherwise.
     """
     lock_dir = Path("./run_locks")
     lock_dir.mkdir(exist_ok=True)
-    lock_file = lock_dir / f"fetch_lock_{lat}_{lon}.lock"
 
-    wait_started = None
-    while lock_file.exists():
-        if wait_started is None:
-            wait_started = time.time()
-            print(f"Fetch for {lat}, {lon} is already in progress. Waiting...")
-
-        if time.time() - wait_started > max_wait_seconds:
-            print(f"Timed out waiting for lock on {lat}, {lon} to be released.")
-            return False  # Timed out
-
-        time.sleep(1)
+    # Per-location lock file to allow parallel fetches for different locations
+    safe_lat = str(lat).replace(".", "_")
+    safe_lon = str(lon).replace(".", "_")
+    lock_file = lock_dir / f"fetch_{safe_lat}_{safe_lon}.lock"
+    lock = FileLock(lock_file, timeout=1)
 
     try:
-        lock_file.touch()
-        print(
-            f"Starting data fetch for lat={lat}, lon={lon} from {start_date} to {end_date}..."
-        )
+        # Non-blocking acquire: if another fetch for the same location is running,
+        # skip and return False to indicate fetch is in progress.
+        with lock.acquire(blocking=False):
+            # Since we have the lock, we should double-check if data was
+            # inserted by a process that held the lock just before us.
+            if HistoricalDataPoint.objects.filter(latitude=lat, longitude=lon).exists():
+                print(f"Data for {lat}, {lon} now exists. Skipping fetch.")
+                return True
 
-        params = ["T2M_MAX", "T2M_MIN", "T2M", "PRECTOTCORR", "WS10M", "RH2M"]
-
-        dfs = []
-        try:
-            for s_chunk, e_chunk in chunk_date_ranges(
-                start_date, end_date, days=chunk_days
-            ):
-                print(f"Fetching {s_chunk} -> {e_chunk} ...")
-                j = fetch_power(lat, lon, s_chunk, e_chunk, params)
-                df_chunk = json_to_dataframe(j, params)
-                dfs.append(df_chunk)
-        except Exception as e:
-            print(f"Failed to fetch data: {e}")
-            return False
-
-        if not dfs:
-            print("No data fetched for the requested range.")
-            return False
-
-        df = pd.concat(dfs)
-        df = df[~df.index.duplicated(keep="first")]
-        df.sort_index(inplace=True)
-        df.reset_index(inplace=True)
-
-        print(f"Successfully fetched {len(df)} total records.")
-        print("Saving data to the database...")
-
-        records_created = 0
-        records_updated = 0
-        for _, row in df.iterrows():
-            data_dict = {
-                "latitude": lat,
-                "longitude": lon,
-                "date": row["date"],
-                "year": row["date"].year,
-                "day_of_year": row["date"].timetuple().tm_yday,
-                "t2m_max": row.get("T2M_MAX"),
-                "t2m_min": row.get("T2M_MIN"),
-                "t2m": row.get("T2M"),
-                "prectotcorr": row.get("PRECTOTCORR"),
-                "ws10m": row.get("WS10M"),
-                "rh2m": row.get("RH2M"),
-            }
-            HistoricalDataPoint.objects.update_or_create(
-                latitude=lat, longitude=lon, date=row["date"], defaults=data_dict
+            print(
+                f"Starting data fetch for lat={lat}, lon={lon} from {start_date} to {end_date}..."
             )
-        
-        print(f"Database sync complete for {lat}, {lon}.")
-        return True
 
-    finally:
-        if lock_file.exists():
-            os.remove(lock_file)
+            params = ["T2M_MAX", "T2M_MIN", "T2M", "PRECTOTCORR", "WS10M", "RH2M"]
+
+            dfs = []
+            try:
+                for s_chunk, e_chunk in chunk_date_ranges(
+                    start_date, end_date, days=chunk_days
+                ):
+                    print(f"Fetching {s_chunk} -> {e_chunk} ...")
+                    j = fetch_power(lat, lon, s_chunk, e_chunk, params)
+                    df_chunk = json_to_dataframe(j, params)
+                    dfs.append(df_chunk)
+            except Exception as e:
+                print(f"Failed to fetch data: {e}")
+                return False
+
+            if not dfs:
+                print("No data fetched for the requested range.")
+                return False
+
+            df = pd.concat(dfs)
+            df = df[~df.index.duplicated(keep="first")]
+            df.sort_index(inplace=True)
+            df.reset_index(inplace=True)
+
+            print(f"Successfully fetched {len(df)} total records.")
+            print("Saving data to the database...")
+
+            # Use bulk_create for efficiency
+            new_records = []
+            for _, row in df.iterrows():
+                new_records.append(
+                    HistoricalDataPoint(
+                        latitude=lat,
+                        longitude=lon,
+                        date=row["date"],
+                        year=row["date"].year,
+                        day_of_year=row["date"].timetuple().tm_yday,
+                        t2m_max=row.get("T2M_MAX"),
+                        t2m_min=row.get("T2M_MIN"),
+                        t2m=row.get("T2M"),
+                        prectotcorr=row.get("PRECTOTCORR"),
+                        ws10m=row.get("WS10M"),
+                        rh2m=row.get("RH2M"),
+                    )
+                )
+            
+            HistoricalDataPoint.objects.bulk_create(new_records, ignore_conflicts=True)
+            
+            print(f"Database sync complete for {lat}, {lon}.")
+            return True
+
+    except Timeout:
+        print(f"A data fetch is already in progress. Skipping request for {lat}, {lon}.")
+        return False

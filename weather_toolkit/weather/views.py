@@ -7,8 +7,10 @@ from django.http import JsonResponse, HttpResponseBadRequest
 from django.shortcuts import render
 from scipy.stats import linregress
 
-from .data_fetcher import fetch_and_store_data
-from .models import HistoricalDataPoint
+from django.core.cache import cache
+
+from .data_fetcher import FetchInProgressError, fetch_and_store_data
+from .models import HistoricalDataPoint, FetchJob
 
 # --- Template View (for the main interface) ---
 
@@ -100,22 +102,27 @@ def _sanitize_value(v):
     return v
 
 def get_yearly_data(lat, lon, var, doy=None, doy_start=None, doy_end=None, agg="mean"):
-    """Fetches and processes yearly data from the database."""
+    """
+    Fetches and processes yearly data from the database.
+    If data is not present, it triggers a fetch.
+    If a fetch is already in progress, it raises FetchInProgressError.
+    """
     qs = HistoricalDataPoint.objects.filter(latitude=lat, longitude=lon)
 
-    # If no data exists for this location, fetch it now.
     if not qs.exists():
-        print(f"No data found for {lat}, {lon}. Fetching from source...")
+        # If there is no data, create a DB-backed job and inform caller
+        print(f"No data found for {lat}, {lon}. Creating DB fetch job...")
         start_date = "19900101"
         end_date = datetime.now().strftime("%Y%m%d")
-        try:
-            fetch_and_store_data(lat, lon, start_date, end_date)
-            # After fetching, re-query the database.
-            qs = HistoricalDataPoint.objects.filter(latitude=lat, longitude=lon)
-        except Exception as e:
-            print(f"Failed to fetch or store data: {e}")
-            # Return an empty series if fetching fails to avoid further errors.
-            return pd.Series([], dtype=float)
+
+        # If there's already a pending or running job for this location, signal fetch-in-progress
+        existing = FetchJob.objects.filter(latitude=lat, longitude=lon, status__in=[FetchJob.STATUS_PENDING, FetchJob.STATUS_RUNNING]).first()
+        if existing:
+            raise FetchInProgressError
+
+        # Otherwise create a new job record. A separate process should run `manage.py process_fetch_jobs`.
+        FetchJob.objects.create(latitude=lat, longitude=lon, start_date=start_date, end_date=end_date)
+        raise FetchInProgressError
 
     if doy:
         qs = qs.filter(day_of_year=doy)
@@ -145,20 +152,40 @@ def get_yearly_data(lat, lon, var, doy=None, doy_start=None, doy_end=None, agg="
 # -----------------------------------------------------------------------------
 
 def percentiles(request):
+    # Validate inputs
     try:
         lat = float(request.GET.get("lat"))
         lon = float(request.GET.get("lon"))
         var = request.GET.get("var")
         doy = int(request.GET.get("doy"))
     except (TypeError, ValueError) as e:
-        return HttpResponseBadRequest(f"Invalid parameter: {e}")
+        return JsonResponse({"error": f"Invalid parameter: {e}"}, status=400)
 
-    yearly_data = get_yearly_data(lat, lon, var, doy=doy)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return JsonResponse({"error": "Invalid latitude/longitude range"}, status=400)
+
+    allowed_vars = {"t2m_max", "t2m_min", "t2m", "prectotcorr", "ws10m", "rh2m", "heat_index"}
+    if var not in allowed_vars:
+        return JsonResponse({"error": "Invalid variable requested"}, status=400)
+
+    if not (1 <= doy <= 366):
+        return JsonResponse({"error": "Day of year must be between 1 and 366"}, status=400)
+
+    cache_key = f"percentiles:{lat}:{lon}:{var}:{doy}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return JsonResponse(_sanitize_value(cached))
+
+    try:
+        yearly_data = get_yearly_data(lat, lon, var, doy=doy)
+    except FetchInProgressError:
+        return JsonResponse(
+            {"status": "accepted", "message": "Data fetch in progress, please retry in a moment."},
+            status=202,
+        )
 
     if len(yearly_data) < 10:
-        return JsonResponse(
-            {"error": "Not enough data to calculate percentiles"}, status=400
-        )
+        return JsonResponse({"error": "Not enough data to calculate percentiles"}, status=400)
 
     percentiles_data = {
         "p10": yearly_data.quantile(0.10),
@@ -167,6 +194,7 @@ def percentiles(request):
         "p75": yearly_data.quantile(0.75),
         "p90": yearly_data.quantile(0.90),
     }
+    cache.set(cache_key, percentiles_data, timeout=60 * 60)
     return JsonResponse(_sanitize_value(percentiles_data))
 
 def probability_view(request):
@@ -178,9 +206,22 @@ def probability_view(request):
         doy = request.GET.get("doy")
         n_boot = int(request.GET.get("n_boot", 1000))
     except (TypeError, ValueError) as e:
-        return HttpResponseBadRequest(f"Invalid parameter: {e}")
+        return JsonResponse({"error": f"Invalid parameter: {e}"}, status=400)
 
-    yearly = get_yearly_data(lat, lon, var, doy=doy)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return JsonResponse({"error": "Invalid latitude/longitude range"}, status=400)
+
+    allowed_vars = {"t2m_max", "t2m_min", "t2m", "prectotcorr", "ws10m", "rh2m", "heat_index"}
+    if var not in allowed_vars:
+        return JsonResponse({"error": "Invalid variable requested"}, status=400)
+
+    try:
+        yearly = get_yearly_data(lat, lon, var, doy=doy)
+    except FetchInProgressError:
+        return JsonResponse(
+            {"status": "accepted", "message": "Data fetch in progress, please retry in a moment."},
+            status=202,
+        )
 
     if len(yearly) < 5:
         return JsonResponse({"error": "Insufficient years of data"}, status=400)
@@ -219,9 +260,28 @@ def trend_view(request):
         if threshold:
             threshold = float(threshold)
     except (TypeError, ValueError) as e:
-        return HttpResponseBadRequest(f"Invalid parameter: {e}")
+        return JsonResponse({"error": f"Invalid parameter: {e}"}, status=400)
 
-    yearly = get_yearly_data(lat, lon, var, doy=doy)
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return JsonResponse({"error": "Invalid latitude/longitude range"}, status=400)
+
+    allowed_vars = {"t2m_max", "t2m_min", "t2m", "prectotcorr", "ws10m", "rh2m", "heat_index"}
+    if var not in allowed_vars:
+        return JsonResponse({"error": "Invalid variable requested"}, status=400)
+
+    cache_key = f"trend:{lat}:{lon}:{var}:{doy}:{threshold}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return JsonResponse(_sanitize_value(cached))
+
+    try:
+        yearly = get_yearly_data(lat, lon, var, doy=doy)
+    except FetchInProgressError:
+        return JsonResponse(
+            {"status": "accepted", "message": "Data fetch in progress, please retry in a moment."},
+            status=202,
+        )
+
     years = yearly.index.astype(int).tolist()
     values = yearly.values.astype(float).tolist()
 
@@ -246,6 +306,7 @@ def trend_view(request):
         "decadal_summary": decadal,
         "computed_on": datetime.now(timezone.utc).isoformat(),
     }
+    cache.set(cache_key, response, timeout=60 * 60)
     return JsonResponse(_sanitize_value(response))
 
 def history_view(request):
@@ -255,9 +316,16 @@ def history_view(request):
         var = request.GET.get("var")
         doy = request.GET.get("doy")
     except (TypeError, ValueError) as e:
-        return HttpResponseBadRequest(f"Invalid parameter: {e}")
+        return JsonResponse({"error": f"Invalid parameter: {e}"}, status=400)
 
-    yearly = get_yearly_data(lat, lon, var, doy=doy)
+    try:
+        yearly = get_yearly_data(lat, lon, var, doy=doy)
+    except FetchInProgressError:
+        return JsonResponse(
+            {"status": "accepted", "message": "Data fetch in progress, please retry in a moment."},
+            status=202,
+        )
+
     years = yearly.index.astype(int).tolist()
     values = yearly.values.astype(float).tolist()
 
@@ -271,3 +339,40 @@ def history_view(request):
         "generated_on": datetime.now(timezone.utc).isoformat(),
     }
     return JsonResponse(_sanitize_value(response))
+
+
+def fetch_job_status(request):
+    """Check status of data fetch jobs for a given location."""
+    try:
+        lat = float(request.GET.get("lat"))
+        lon = float(request.GET.get("lon"))
+    except (TypeError, ValueError) as e:
+        return JsonResponse({"error": f"Invalid parameter: {e}"}, status=400)
+
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        return JsonResponse({"error": "Invalid latitude/longitude range"}, status=400)
+
+    # Find the most recent job for this location
+    job = FetchJob.objects.filter(latitude=lat, longitude=lon).order_by("-created_at").first()
+
+    if not job:
+        return JsonResponse({"status": "no_jobs", "message": "No fetch jobs found for this location"})
+
+    response = {
+        "status": job.status,
+        "attempts": job.attempts,
+        "last_error": job.last_error,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+    }
+
+    if job.status == FetchJob.STATUS_PENDING:
+        response["message"] = "Job is queued and waiting to run."
+    elif job.status == FetchJob.STATUS_RUNNING:
+        response["message"] = "Job is currently fetching data..."
+    elif job.status == FetchJob.STATUS_DONE:
+        response["message"] = "Job completed successfully."
+    elif job.status == FetchJob.STATUS_FAILED:
+        response["message"] = f"Job failed: {job.last_error}"
+
+    return JsonResponse(response)

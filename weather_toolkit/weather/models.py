@@ -40,3 +40,53 @@ class HistoricalDataPoint(models.Model):
 
     def __str__(self):
         return f"{self.date} at {self.latitude:.2f}, {self.longitude:.2f}"
+
+
+class DataFetchLock(models.Model):
+    """
+    A lock to prevent concurrent data fetches for the same location.
+    """
+    latitude = models.FloatField(db_index=True)
+    longitude = models.FloatField(db_index=True)
+    is_locked = models.BooleanField(default=True)
+    locked_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = (('latitude', 'longitude'),)
+
+
+class FetchJob(models.Model):
+    """
+    A simple DB-backed job queue entry for scheduling data fetches
+    without external workers. Use `manage.py process_fetch_jobs` to
+    run pending jobs.
+    """
+    STATUS_PENDING = 'pending'
+    STATUS_RUNNING = 'running'
+    STATUS_DONE = 'done'
+    STATUS_FAILED = 'failed'
+
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Pending'),
+        (STATUS_RUNNING, 'Running'),
+        (STATUS_DONE, 'Done'),
+        (STATUS_FAILED, 'Failed'),
+    ]
+
+    latitude = models.FloatField(db_index=True)
+    longitude = models.FloatField(db_index=True)
+    start_date = models.CharField(max_length=8)  # YYYYMMDD
+    end_date = models.CharField(max_length=8)    # YYYYMMDD
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    attempts = models.IntegerField(default=0)
+    last_error = models.TextField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['status']),
+        ]
+
+    def __str__(self):
+        return f"FetchJob({self.latitude},{self.longitude}) {self.status}"
